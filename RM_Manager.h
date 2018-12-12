@@ -47,9 +47,9 @@ typedef struct{//文件句柄
 	bool bOpen;//句柄是否打开（是否正在被使用）
 	//需要自定义其内部结构
 	PF_FileHandle *pfFileHandle; //与该句柄关联的页面文件句柄
-	PF_PageHandle *pageHandle; //页面句柄
+	PF_PageHandle *pageHandle; //记录控制页页面句柄
 
-	char *rBitMap; //记录控制页位图的指针
+	char *rBitMap; //记录信息控制页位图的指针
 	RM_FileSubHeader *fileSubHeader; //记录文件的FileSubHeader结构
 }RM_FileHandle;
 
