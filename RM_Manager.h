@@ -38,11 +38,6 @@ typedef struct {
 	int firstRecordOffset;      //每页第一个记录在数据区中的开始位置
 }RM_FileSubHeader;
 
-typedef struct {
-	char *bitmap; //数据页位图
-	RM_Record *record; //第一条记录的起始位置
-}RM_Page;
-
 typedef struct{//文件句柄
 	bool bOpen;//句柄是否打开（是否正在被使用）
 	PF_FileHandle *pfFileHandle; //与该句柄关联的页面文件句柄
@@ -57,7 +52,7 @@ typedef struct{
 	RM_FileHandle  *pRMFileHandle;		//扫描的记录文件句柄
 	int  conNum;		//扫描涉及的条件数量 
 	Con  *conditions;	//扫描涉及的条件数组指针
-    PF_PageHandle  PageHandle; //处理中的页面句柄
+    PF_PageHandle  *pageHandle; //处理中的页面句柄
 	PageNum  pn; 	//扫描即将处理的页面号
 	SlotNum  sn;		//扫描即将处理的插槽号
 }RM_FileScan;

@@ -3,14 +3,383 @@
 #include "str.h"
 
 
+RC CloseScan(RM_FileScan *rmFileScan) 
+{
+	rmFileScan->bOpen = false;
+	rmFileScan->conditions = NULL;
+	rmFileScan->conNum = 0;
+	rmFileScan->pRMFileHandle = NULL;
+	rmFileScan->pn = 0;
+	rmFileScan->sn = 0;
+	if (rmFileScan->pageHandle != NULL) {
+		UnpinPage(rmFileScan->pageHandle);
+		free(rmFileScan->pageHandle);
+		rmFileScan->pageHandle = NULL;
+	}
+	return SUCCESS;
+}
+
 RC OpenScan(RM_FileScan *rmFileScan, RM_FileHandle *fileHandle, int conNum, Con *conditions)//初始化扫描
 {
+	PF_PageHandle *pageHandle = (PF_PageHandle *)malloc(sizeof(PF_PageHandle));
+	RC rc;
+	char *pBitMap = fileHandle->pfFileHandle->pBitmap;
+	char *pData;
+	rmFileScan->bOpen = true;
+	rmFileScan->conditions = conditions;
+	rmFileScan->conNum = conNum;
+	rmFileScan->pRMFileHandle = fileHandle;
+	
+	/*处理pageHandle, pn, sn*/
+	if (fileHandle->pfFileHandle->pFileSubHeader->nAllocatedPages <= 2) { //没有已分配页
+		rmFileScan->pageHandle = NULL;
+		rmFileScan->pn = 0;
+		rmFileScan->sn = 0;
+	} else {
+		//找到第一个已分配页的第一条有效记录
+		for (int i = 2; i <= fileHandle->pfFileHandle->pFileSubHeader->pageCount; i++) {
+			if (*(pBitMap + i / 8) & (1 << (i % 8)) != 0) { //当前页是已分配页
+				//找到第一个被占用的记录槽
+				if ((rc = GetThisPage(fileHandle->pfFileHandle, i, pageHandle)) != SUCCESS) { //获得页面句柄
+					return rc;
+				}
+				if ((rc = GetData(pageHandle, &pData)) != SUCCESS) { 
+					return rc;
+				}
+				for (int j = 0; j < fileHandle->fileSubHeader->recordsPerPage; j++) {
+					if ((*(pData + j / 8)) & (1 << j % 8) != 0) { //找到有效插槽
+						rmFileScan->pageHandle = pageHandle;
+						rmFileScan->pn = i;
+						rmFileScan->sn = j;
+						break;
+					}
+				}
+				break;
+			}
+		}
+	}
+	
 	return SUCCESS;
 }
 
 RC GetNextRec(RM_FileScan *rmFileScan, RM_Record *rec)
 {
+	if (rmFileScan->pn == 0) {
+		return RM_EOF;
+	}
+
+	RID *rid = (RID *)malloc(sizeof(RID));
+	RM_Record *pRec = rec;
+	RC rc;
+	Con *con = rmFileScan->conditions; //条件起始地址
+	int conNum = rmFileScan->conNum; //条件数量
+	char *pfBitMap = rmFileScan->pRMFileHandle->pfFileHandle->pBitmap;
+	PF_PageHandle *pageHandle = rmFileScan->pageHandle; //pageHandle
+	char *pData;
+
+	rid->bValid = true;
+	rid->pageNum = rmFileScan->pn; //页号
+	rid->slotNum = rmFileScan->sn; //插槽号
+	
+	if (rmFileScan->conNum == 0) { //条件为空
+		if ((rc = GetRec(rmFileScan->pRMFileHandle, rid, pRec)) != SUCCESS) { //直接获取记录
+			return rc;
+		}
+		//设置新的pn, pageHandle, sn
+		int tmpPn = rid->pageNum;
+		int tmpSn = rid->slotNum + 1;
+		rid->bValid = false;
+
+		for (; tmpPn <= rmFileScan->pRMFileHandle->pfFileHandle->pFileSubHeader->pageCount; tmpPn++) { //遍历页
+			if (*(pfBitMap + tmpPn / 8) & (1 << tmpPn % 8) != 0) { //是有效页
+				if ((rc = GetThisPage(rmFileScan->pRMFileHandle->pfFileHandle, tmpPn, pageHandle)) != SUCCESS) {
+					return rc;
+				}
+				if ((rc = GetData(pageHandle, &pData)) != SUCCESS) {
+					return rc;
+				}
+
+				for (; tmpSn < rmFileScan->pRMFileHandle->fileSubHeader->recordsPerPage; tmpSn++) { //遍历当前页的槽
+					if (*(pData + tmpSn / 8) & (1 << tmpSn % 8) != 0) { //是有效槽
+						rid->bValid = true;
+						rid->pageNum = tmpPn;
+						rid->slotNum = tmpSn;
+						break;
+					}
+				}
+
+				if (rid->bValid) { //找到下一个纪录了
+					break;
+				} else { //当前页没有下一条记录
+					UnpinPage(pageHandle);
+				}
+			}
+		}
+
+		if (!rid->bValid) { //没有下一条记录了
+			rid->pageNum = 0;
+			rid->slotNum = 0;
+		}
+
+	} else { //条件不为空
+		char *pData;
+		int bLhsIsAttr, bRhsIsAttr;
+		CompOp compOp;
+		int LattrLength, LattrOffset, RattrLength, RattrOffset;
+		void *Lvalue, *Rvalue;
+		
+		while (true) { //此循环来找出满足条件的一条记录, 并找出下一条记录的pn, sn，pageHandle
+			if ((rc = GetRec(rmFileScan->pRMFileHandle, rid, pRec)) != SUCCESS) { //直接获取记录
+				return rc;
+			}
+			pData = pRec->pData; //记录的数据起始地址
+			
+			//判断找出的记录是否满足所有条件
+			int i = 0; //满足的条件数
+			bool flag; //是否符合条件
+			for (; i < conNum; i++) {
+				flag = false; 
+				/*一些赋值*/
+				bLhsIsAttr = (con + i)->bLhsIsAttr;
+				bRhsIsAttr = (con + i)->bRhsIsAttr;
+				compOp = (con + i)->compOp;
+				AttrType attrType = (con + i)->attrType;
+				LattrLength = (con + i)->LattrLength;
+				LattrOffset = (con + i)->LattrOffset;
+				RattrLength = (con + i)->RattrLength;
+				RattrOffset = (con + i)->RattrOffset;
+				Lvalue = (con + i)->Lvalue;
+				Rvalue = (con + i)->Rvalue;
+
+				switch (attrType) {
+				case chars:
+					char *charLv, *charRv;
+					if (bLhsIsAttr) {
+						strncpy(charLv, pData + LattrOffset, LattrLength);
+					} else {
+						charLv = (char *)Lvalue;
+					}
+					if (bRhsIsAttr) {
+						strncpy(charRv, pData + RattrOffset, RattrLength);
+					} else {
+						charRv = (char *)Rvalue;
+					}
+
+					flag = charCompare(compOp, charLv, charRv);
+					break;
+				case ints:
+					int intLv, intRv;
+					if (bLhsIsAttr) {
+						intLv = *(int *)(pData + LattrOffset);
+					} else {
+						intLv = *(int *)Lvalue;
+					}
+					if (bRhsIsAttr) {
+						intRv = *(int *)(pData + RattrOffset);
+					} else {
+						intRv = *(int *)Rvalue;
+					}
+					
+					flag = intCompare(compOp, intLv, intRv);
+					break;
+				case floats:
+					float floatLv, floatRv;
+					if (bLhsIsAttr) {
+						floatLv = *(float *)(pData + LattrOffset);
+					} else {
+						floatLv = *(float *)Lvalue;
+					}
+					if (bRhsIsAttr) {
+						floatRv = *(float *)(pData + RattrOffset);
+					} else {
+						floatRv = *(float *)Rvalue;
+					}
+
+					flag = floatCompare(compOp, floatLv, floatRv);
+					break;
+				default:
+					break;
+				}
+
+				if (!flag) { //不符合条件
+					break;
+				}
+			}
+
+			//设置新的pn, pageHandle, sn
+			int tmpPn = rid->pageNum;
+			int tmpSn = rid->slotNum + 1;
+			rid->bValid = false;
+
+			for (; tmpPn <= rmFileScan->pRMFileHandle->pfFileHandle->pFileSubHeader->pageCount; tmpPn++) { //遍历页
+				if (*(pfBitMap + tmpPn / 8) & (1 << tmpPn % 8) != 0) { //是有效页
+					if ((rc = GetThisPage(rmFileScan->pRMFileHandle->pfFileHandle, tmpPn, pageHandle)) != SUCCESS) {
+						return rc;
+					}
+					if ((rc = GetData(pageHandle, &pData)) != SUCCESS) {
+						return rc;
+					}
+					
+					for (; tmpSn < rmFileScan->pRMFileHandle->fileSubHeader->recordsPerPage; tmpSn++) { //遍历当前页的槽
+						if (*(pData + tmpSn / 8) & (1 << tmpSn % 8) != 0) { //是有效槽
+							rid->bValid = true;
+							rid->pageNum = tmpPn;
+							rid->slotNum = tmpSn;
+							break;
+						}
+					}
+
+					if (rid->bValid) { //找到下一个纪录了
+						break;
+					} else { //当前页没有下条记录
+						UnpinPage(pageHandle);
+					}
+				}
+			}
+
+			if (!rid->bValid) { //没找到下一条记录，说明遍历完成
+				rid->pageNum = 0;
+				rid->slotNum = 0;
+				break;
+			}
+
+			if (i >= conNum) {	//当当前记录满足所有条件
+				break; //跳出while循环
+			}
+
+		}
+		
+	} 
+
+	/*修改rmFileScan*/
+	rmFileScan->pageHandle = pageHandle;
+	rmFileScan->pn = rid->pageNum;
+	rmFileScan->sn = rid->slotNum;
+	
+	rec = pRec;
+	free(rid);
+
 	return SUCCESS;
+}
+
+bool charCompare(CompOp op, char *charLv, char *charRv) {
+	bool flag = false;
+	int result = strcmp(charLv, charLv);
+	switch (op) {
+	case EQual:	// =
+		if (result == 0) {
+			flag = true;
+		}
+		break;
+	case LEqual: // <=
+		if (result <= 0) {
+			flag = true;
+		}
+		break;
+	case NEqual: // !=
+		if (result != 0) {
+			flag = true;
+		}
+		break;
+	case LessT: // <
+		if (result < 0) {
+			flag = true;
+		}
+		break;
+	case GEqual: // >=
+		if (result >= 0) {
+			flag = true;
+		}
+		break;
+	case GreatT: // >
+		if (result > 0) {
+			flag = true;
+		}
+		break;
+	default: // NO_OP
+		break;
+	}
+	return flag;
+}
+
+bool intCompare(CompOp op, int intLv, int intRv) {
+	bool flag = false;
+	switch (op) {
+	case EQual: // =
+		if (intLv == intRv) {
+			flag = true;
+		}
+		break;
+	case LEqual: // <=
+		if (intLv <= intRv) {
+			flag = true;
+		}
+		break;
+	case NEqual: // !=
+		if (intLv <= intRv) {
+			flag = true;
+		}
+		break;
+	case LessT: // <
+		if (intLv < intRv) {
+			flag = true;
+		}
+		break;
+	case GEqual: // >=
+		if (intLv >= intRv) {
+			flag = true;
+		}
+		break;
+	case GreatT: // >
+		if (intLv > intRv) {
+			flag = true;
+		}
+		break;
+	default: // NO_OP
+		break;
+	}
+
+	return flag;
+}
+
+bool floatCompare(CompOp op, int floatLv, int floatRv) {
+	bool flag = false;
+	switch (op) {
+	case EQual: // =
+		if (floatLv == floatRv) {
+			flag = true;
+		}
+		break;
+	case LEqual: // <=
+		if (floatLv <= floatRv) {
+			flag = true;
+		}
+		break;
+	case NEqual: // !=
+		if (floatLv != floatRv) {
+			flag = true;
+		}
+		break;
+	case LessT: // <
+		if (floatLv < floatRv) {
+			flag = true;
+		}
+		break;
+	case GEqual: // >=
+		if (floatLv >= floatRv) {
+			flag = true;
+		}
+		break;
+	case GreatT: // >
+		if (floatLv > floatRv) {
+			flag = true;
+		}
+		break;
+	default:
+		break;
+	}
+
+	return flag;
 }
 
 RC GetRec (RM_FileHandle *fileHandle, RID *rid, RM_Record *rec) 
@@ -52,9 +421,9 @@ RC InsertRec (RM_FileHandle *fileHandle, char *pData, RID *rid)
 	char *pDataAddr; //data地址
 
 	//找到一个非满页
-	for (unsigned int i = 2; i <= endPageNum; i++) {
-		if (*(pfBitMap + i / 8) & (1 << (i % 8))) { //当前页是已分配页
-			if (*(rmBitMap + i / 8) & (1 << (i % 8))) { //如果该页面已满
+	for (int i = 2; i <= endPageNum; i++) {
+		if (*(pfBitMap + i / 8) & (1 << (i % 8)) != 0) { //当前页是已分配页
+			if (*(rmBitMap + i / 8) & (1 << (i % 8)) != 0) { //如果该页面已满
 				continue;
 			} else { //该页面未满
 				//找槽插入记录 
@@ -112,7 +481,7 @@ RC InsertRec (RM_FileHandle *fileHandle, char *pData, RID *rid)
 
 	/**修改记录控制页的bitmap**/ 
 	//判断插入记录的数据页是否已满
-	int posNum = 0; //被占用的插槽个数
+	int posNum = pRid->slotNum + 1; //被占用的插槽个数
 	for (; posNum < fileHandle->fileSubHeader->recordsPerPage; posNum++) {
 		if (*(pDataAddr + posNum / 8) & (1 << posNum % 8) == 0) { //有一个空槽就退出
 			break;
@@ -260,6 +629,7 @@ RC RM_CreateFile (char *fileName, int recordSize)
 	rmFileSubHeader->firstRecordOffset = numBitMapByte;
 	rmFileSubHeader->recordsPerPage = recordsPerPage;
 	memcpy(pData, (char *)rmFileSubHeader, RM_FILESUBHDR_SIZE); //复制
+	//bitmap不用处理
 	MarkDirty(pageHandle1);
 
 	//解除驻留缓冲区限制
