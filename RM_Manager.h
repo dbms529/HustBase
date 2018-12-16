@@ -79,4 +79,10 @@ RC RM_OpenFile (char *fileName, RM_FileHandle *fileHandle);
 
 RC RM_CreateFile (char *fileName, int recordSize);
 
+bool charCompare(CompOp op, char *charLv, char *charRv);
+
+bool intCompare(CompOp op, int intLv, int intRv);
+
+bool floatCompare(CompOp op, int floatLv, int floatRv);
+
 #endif

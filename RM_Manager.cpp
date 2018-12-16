@@ -37,7 +37,7 @@ RC OpenScan(RM_FileScan *rmFileScan, RM_FileHandle *fileHandle, int conNum, Con 
 		rmFileScan->sn = 0;
 	} else {
 		//找到第一个已分配页的第一条有效记录
-		for (int i = 2; i <= fileHandle->pfFileHandle->pFileSubHeader->pageCount; i++) {
+		for (unsigned int i = 2; i <= fileHandle->pfFileHandle->pFileSubHeader->pageCount; i++) {
 			if (*(pBitMap + i / 8) & (1 << (i % 8)) != 0) { //当前页是已分配页
 				//找到第一个被占用的记录槽
 				if ((rc = GetThisPage(fileHandle->pfFileHandle, i, pageHandle)) != SUCCESS) { //获得页面句柄
@@ -86,7 +86,7 @@ RC GetNextRec(RM_FileScan *rmFileScan, RM_Record *rec)
 			return rc;
 		}
 		//设置新的pn, pageHandle, sn
-		int tmpPn = rid->pageNum;
+		unsigned int tmpPn = rid->pageNum;
 		int tmpSn = rid->slotNum + 1;
 		rid->bValid = false;
 
@@ -207,7 +207,7 @@ RC GetNextRec(RM_FileScan *rmFileScan, RM_Record *rec)
 			}
 
 			//设置新的pn, pageHandle, sn
-			int tmpPn = rid->pageNum;
+			unsigned int tmpPn = rid->pageNum;
 			int tmpSn = rid->slotNum + 1;
 			rid->bValid = false;
 
