@@ -38,7 +38,7 @@ RC OpenScan(RM_FileScan *rmFileScan, RM_FileHandle *fileHandle, int conNum, Con 
 	} else {
 		//找到第一个已分配页的第一条有效记录
 		for (unsigned int i = 2; i <= fileHandle->pfFileHandle->pFileSubHeader->pageCount; i++) {
-			if (*(pBitMap + i / 8) & (1 << (i % 8)) != 0) { //当前页是已分配页
+			if (((*(pBitMap + i / 8)) & (1 << (i % 8))) != 0) { //当前页是已分配页
 				//找到第一个被占用的记录槽
 				if ((rc = GetThisPage(fileHandle->pfFileHandle, i, pageHandle)) != SUCCESS) { //获得页面句柄
 					return rc;
@@ -47,7 +47,7 @@ RC OpenScan(RM_FileScan *rmFileScan, RM_FileHandle *fileHandle, int conNum, Con 
 					return rc;
 				}
 				for (int j = 0; j < fileHandle->fileSubHeader->recordsPerPage; j++) {
-					if ((*(pData + j / 8)) & (1 << j % 8) != 0) { //找到有效插槽
+					if (((*(pData + j / 8)) & (1 << j % 8)) != 0) { //找到有效插槽
 						rmFileScan->pageHandle = pageHandle;
 						rmFileScan->pn = i;
 						rmFileScan->sn = j;
@@ -91,7 +91,7 @@ RC GetNextRec(RM_FileScan *rmFileScan, RM_Record *rec)
 		rid->bValid = false;
 
 		for (; tmpPn <= rmFileScan->pRMFileHandle->pfFileHandle->pFileSubHeader->pageCount; tmpPn++) { //遍历页
-			if (*(pfBitMap + tmpPn / 8) & (1 << tmpPn % 8) != 0) { //是有效页
+			if (((*(pfBitMap + tmpPn / 8)) & (1 << tmpPn % 8)) != 0) { //是有效页
 				if ((rc = GetThisPage(rmFileScan->pRMFileHandle->pfFileHandle, tmpPn, pageHandle)) != SUCCESS) {
 					return rc;
 				}
@@ -100,7 +100,7 @@ RC GetNextRec(RM_FileScan *rmFileScan, RM_Record *rec)
 				}
 
 				for (; tmpSn < rmFileScan->pRMFileHandle->fileSubHeader->recordsPerPage; tmpSn++) { //遍历当前页的槽
-					if (*(pData + tmpSn / 8) & (1 << tmpSn % 8) != 0) { //是有效槽
+					if (((*(pData + tmpSn / 8)) & (1 << tmpSn % 8)) != 0) { //是有效槽
 						rid->bValid = true;
 						rid->pageNum = tmpPn;
 						rid->slotNum = tmpSn;
@@ -212,7 +212,7 @@ RC GetNextRec(RM_FileScan *rmFileScan, RM_Record *rec)
 			rid->bValid = false;
 
 			for (; tmpPn <= rmFileScan->pRMFileHandle->pfFileHandle->pFileSubHeader->pageCount; tmpPn++) { //遍历页
-				if (*(pfBitMap + tmpPn / 8) & (1 << tmpPn % 8) != 0) { //是有效页
+				if (((*(pfBitMap + tmpPn / 8)) & (1 << tmpPn % 8)) != 0) { //是有效页
 					if ((rc = GetThisPage(rmFileScan->pRMFileHandle->pfFileHandle, tmpPn, pageHandle)) != SUCCESS) {
 						return rc;
 					}
@@ -221,7 +221,7 @@ RC GetNextRec(RM_FileScan *rmFileScan, RM_Record *rec)
 					}
 					
 					for (; tmpSn < rmFileScan->pRMFileHandle->fileSubHeader->recordsPerPage; tmpSn++) { //遍历当前页的槽
-						if (*(pData + tmpSn / 8) & (1 << tmpSn % 8) != 0) { //是有效槽
+						if (((*(pData + tmpSn / 8)) & (1 << tmpSn % 8)) != 0) { //是有效槽
 							rid->bValid = true;
 							rid->pageNum = tmpPn;
 							rid->slotNum = tmpSn;
@@ -342,7 +342,7 @@ bool intCompare(CompOp op, int intLv, int intRv) {
 	return flag;
 }
 
-bool floatCompare(CompOp op, int floatLv, int floatRv) {
+bool floatCompare(CompOp op, float floatLv, float floatRv) {
 	bool flag = false;
 	switch (op) {
 	case EQual: // =
@@ -422,8 +422,8 @@ RC InsertRec (RM_FileHandle *fileHandle, char *pData, RID *rid)
 
 	//找到一个非满页
 	for (int i = 2; i <= endPageNum; i++) {
-		if (*(pfBitMap + i / 8) & (1 << (i % 8)) != 0) { //当前页是已分配页
-			if (*(rmBitMap + i / 8) & (1 << (i % 8)) != 0) { //如果该页面已满
+		if (((*(pfBitMap + i / 8)) & (1 << (i % 8))) != 0) { //当前页是已分配页
+			if (((*(rmBitMap + i / 8)) & (1 << (i % 8))) != 0) { //如果该页面已满
 				continue;
 			} else { //该页面未满
 				//找槽插入记录 
@@ -434,7 +434,7 @@ RC InsertRec (RM_FileHandle *fileHandle, char *pData, RID *rid)
 					return rc;
 				}
 				for (int j = 0; j < fileHandle->fileSubHeader->recordsPerPage; j++) {
-					if ((*(pDataAddr + j / 8)) & (1 << (j % 8)) == 0) { //找到插槽
+					if (((*(pDataAddr + j / 8)) & (1 << (j % 8))) == 0) { //找到插槽
 						pRid->bValid = true;
 						pRid->pageNum = i;
 						pRid->slotNum = j;
@@ -483,7 +483,7 @@ RC InsertRec (RM_FileHandle *fileHandle, char *pData, RID *rid)
 	//判断插入记录的数据页是否已满
 	int posNum = pRid->slotNum + 1; //被占用的插槽个数
 	for (; posNum < fileHandle->fileSubHeader->recordsPerPage; posNum++) {
-		if (*(pDataAddr + posNum / 8) & (1 << posNum % 8) == 0) { //有一个空槽就退出
+		if (((*(pDataAddr + posNum / 8)) & (1 << posNum % 8)) == 0) { //有一个空槽就退出
 			break;
 		}
 	}

@@ -83,6 +83,6 @@ bool charCompare(CompOp op, char *charLv, char *charRv);
 
 bool intCompare(CompOp op, int intLv, int intRv);
 
-bool floatCompare(CompOp op, int floatLv, int floatRv);
+bool floatCompare(CompOp op, float floatLv, float floatRv);
 
 #endif
